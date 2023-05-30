@@ -2625,7 +2625,45 @@ class TestTransforms(TestBase):
         self.assertIn(call, modified)
         self.assertNotEqual(call.callee, foo)
         self.assertEqual(call.callee, bar)
+    
+    def test_fastmath_visitor(self):
+        mod = ir.Module()
+        callee = ir.Function(mod, ir.FunctionType(ir.DoubleType(), (ir.DoubleType(), ir.DoubleType())), "foo")
+        builder = ir.IRBuilder()
+        builder.position_at_end(callee.append_basic_block())
+        add = builder.fadd(callee.args[0], callee.args[1])
+        sub = builder.fsub(callee.args[0], add)
+        builder.ret(sub)
 
+        caller = ir.Function(mod, ir.FunctionType(ir.DoubleType(), (ir.DoubleType(), ir.DoubleType())), "bar")
+        builder.position_at_end(caller.append_basic_block())
+        call = builder.call(callee, caller.args)
+        _ = builder.ret(call)
+
+        self.assertNotIn("fadd nsz", str(mod))
+        self.assertNotIn("fsub nsz", str(mod))
+
+        class FastMathVisitor(ir.Visitor):
+            def visit_Instruction(self, instr):
+                if instr.opname == "fadd" or instr.opname == "fsub":
+                    instr.flags.append("nsz")
+        FastMathVisitor().visit(mod)
+
+        self.assertIn("fadd nsz", str(mod))
+        self.assertIn("fsub nsz", str(mod))
+
+        self.assertIn("call double @\"foo\"", str(mod))
+
+        class FastMathCallVisitor(ir.CallVisitor):
+            def visit_Call(self, instr):
+                if instr.callee.name == "foo":
+                    instr.fastmath.add("fast")
+        FastMathCallVisitor().visit(mod)
+
+        self.assertIn("call fast double @\"foo\"", str(mod))
+    
+
+    
 
 class TestSingleton(TestBase):
     def test_undefined(self):
